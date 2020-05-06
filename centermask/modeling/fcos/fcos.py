@@ -58,6 +58,10 @@ class FCOS(nn.Module):
         self.sizes_of_interest = soi
         self.fcos_head = FCOSHead(cfg, [input_shape[f] for f in self.in_features])
 
+        self.min_box_size = cfg.MODEL.FCOS.MIN_SIZE
+        self.max_box_size = cfg.MODEL.FCOS.MAX_SIZE
+
+
     def forward(self, images, features, gt_instances):
         """
         Arguments:
@@ -104,6 +108,8 @@ class FCOS(nn.Module):
             post_nms_topk,
             self.thresh_with_ctr,
             gt_instances,
+            min_box_size=self.min_box_size,
+            max_box_size=self.max_box_size
         )
 
         if self.training:

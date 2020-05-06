@@ -9,6 +9,7 @@ from fvcore.nn import sigmoid_focal_loss_jit
 
 from centermask.utils.comm import reduce_sum
 from centermask.layers import ml_nms
+import numpy as np
 
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,8 @@ class FCOSOutputs(object):
             fpn_post_nms_top_n,
             thresh_with_ctr,
             gt_instances=None,
+            min_box_size=0,
+            max_box_size=np.inf,
     ):
         self.logits_pred = logits_pred
         self.reg_pred = reg_pred
@@ -152,6 +155,10 @@ class FCOSOutputs(object):
         self.nms_thresh = nms_thresh
         self.fpn_post_nms_top_n = fpn_post_nms_top_n
         self.thresh_with_ctr = thresh_with_ctr
+
+        self.min_box_size = min_box_size
+        self.max_box_size = max_box_size
+
 
     def _transpose(self, training_targets, num_loc_list):
         '''
@@ -365,7 +372,7 @@ class FCOSOutputs(object):
 
         boxlists = list(zip(*sampled_boxes))
         boxlists = [Instances.cat(boxlist) for boxlist in boxlists]
-        boxlists = self.select_over_all_levels(boxlists)
+        boxlists = self.select_over_all_levels(boxlists, self.min_box_size, self.max_box_size)
         return boxlists
 
     def forward_for_single_feature_map(
@@ -433,7 +440,7 @@ class FCOSOutputs(object):
 
         return results
 
-    def select_over_all_levels(self, boxlists):
+    def select_over_all_levels(self, boxlists, min_size=0, max_size=np.inf):
         num_images = len(boxlists)
         results = []
         for i in range(num_images):
@@ -451,5 +458,26 @@ class FCOSOutputs(object):
                 keep = cls_scores >= image_thresh.item()
                 keep = torch.nonzero(keep).squeeze(1)
                 result = result[keep]
+                result = select_by_size(result, min_size, max_size)
             results.append(result)
         return results
+
+
+def select_by_size(boxlist, threshold: int = 0, upper_threshold: float = np.inf) -> torch.Tensor:
+    """
+    Find boxes that are non-empty.
+    A box is considered empty, if either of its side is no larger than threshold.
+    Returns:
+        Tensor:
+            a binary vector which represents whether each box is empty
+            (False) or non-empty (True).
+    """
+
+    boxes = boxlist.pred_boxes.tensor
+
+    widths = boxes[:, 2] - boxes[:, 0]
+    heights = boxes[:, 3] - boxes[:, 1]
+    keep = (widths > threshold) & (heights > threshold) & (widths < upper_threshold) & (heights < upper_threshold)
+    boxlist = boxlist[keep]
+
+    return boxlist

@@ -3,15 +3,12 @@
 import logging
 import os
 from collections import OrderedDict
-import torch
-from torch.nn.parallel import DistributedDataParallel
 
 import detectron2.utils.comm as comm
 from detectron2.data import MetadataCatalog, build_detection_train_loader
+from detectron2.data.dataset_mapper import DatasetMapper
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch
-from detectron2.utils.events import EventStorage
 from detectron2.evaluation import (
-    CityscapesEvaluator,
     COCOPanopticEvaluator,
     DatasetEvaluators,
     LVISEvaluator,
@@ -19,12 +16,15 @@ from detectron2.evaluation import (
     SemSegEvaluator,
     verify_results,
 )
-from centermask.evaluation import COCOEvaluator
 from detectron2.modeling import GeneralizedRCNNWithTTA
+from detectron2.utils.events import EventStorage
+from torch.nn.parallel import DistributedDataParallel
 
-from detectron2.data.dataset_mapper import DatasetMapper
-from centermask.config import get_cfg
 from centermask.checkpoint import AdetCheckpointer
+from centermask.config import get_cfg
+from centermask.evaluation import COCOEvaluator
+from dataset_utils import register_polyp_datasets
+from giana_evaluator import GianaEvaulator
 
 
 class Trainer(DefaultTrainer):
@@ -133,15 +133,13 @@ class Trainer(DefaultTrainer):
                     output_dir=output_folder,
                 )
             )
+        if evaluator_type == 'giana':
+            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+            evaluator_list.append(GianaEvaulator(dataset_name, output_folder))
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
             evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
         if evaluator_type == "coco_panoptic_seg":
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
-        if evaluator_type == "cityscapes":
-            assert (
-                torch.cuda.device_count() >= comm.get_rank()
-            ), "CityscapesEvaluator currently do not work with multiple machines."
-            return CityscapesEvaluator(dataset_name)
         if evaluator_type == "pascal_voc":
             return PascalVOCDetectionEvaluator(dataset_name)
         if evaluator_type == "lvis":
@@ -220,6 +218,9 @@ def main(args):
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
+
+    register_polyp_datasets()
+
     print("Command Line Args:", args)
     launch(
         main,

@@ -1,0 +1,29 @@
+_BASE_: "Base-CenterMask-ResNet.yaml"
+MODEL:
+  FCOS:
+    NUM_CLASSES: 2
+    PRE_NMS_TOPK_TRAIN: 100
+    PRE_NMS_TOPK_TEST: 100
+    POST_NMS_TOPK_TRAIN: 5
+    POST_NMS_TOPK_TEST: 3
+#    MIN_SIZE: 10
+    MAX_SIZE: 120
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+SOLVER:
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.0025
+  WEIGHT_DECAY: 0.0001
+  STEPS: (0, 3097, 4360)
+  MAX_ITER: 6195 # 5 epocas
+#  LR_SCHEDULER_NAME: "WarmupCosineLR"
+DATASETS:
+  TRAIN: ("CVC_HDClassif","CVC_ColonDB","CVC_ClinicDB",)
+  TEST: ("CVC_VideoClinicDB_test",)
+INPUT:
+  MIN_SIZE_TRAIN: (288, 540)
+  MAX_SIZE_TRAIN: 800
+  MIN_SIZE_TEST: 288
+  MAX_SIZE_TEST: 800
+OUTPUT_DIR: "output/CenterMask-R-50-FPN-ms-3x"

@@ -59,10 +59,7 @@ class COCOEvaluator(DatasetEvaluator):
 
         self._metadata = MetadataCatalog.get(dataset_name)
         if not hasattr(self._metadata, "json_file"):
-            self._logger.warning(
-                f"json_file was not found in MetaDataCatalog for '{dataset_name}'."
-                " Trying to convert it to COCO format ..."
-            )
+            self._logger.warning(f"json_file was not found in MetaDataCatalog for '{dataset_name}'")
 
             cache_path = os.path.join(output_dir, f"{dataset_name}_coco_format.json")
             self._metadata.json_file = cache_path
@@ -79,6 +76,7 @@ class COCOEvaluator(DatasetEvaluator):
 
     def reset(self):
         self._predictions = []
+        self._coco_results = []
 
     def _tasks_from_config(self, cfg):
         """
@@ -115,15 +113,13 @@ class COCOEvaluator(DatasetEvaluator):
     def evaluate(self):
         if self._distributed:
             comm.synchronize()
-            predictions = comm.gather(self._predictions, dst=0)
-            predictions = list(itertools.chain(*predictions))
+            self._predictions = comm.gather(self._predictions, dst=0)
+            self._predictions = list(itertools.chain(*self._predictions))
 
             if not comm.is_main_process():
                 return {}
-        else:
-            predictions = self._predictions
 
-        if len(predictions) == 0:
+        if len(self._predictions) == 0:
             self._logger.warning("[COCOEvaluator] Did not receive valid predictions.")
             return {}
 
@@ -131,30 +127,30 @@ class COCOEvaluator(DatasetEvaluator):
             PathManager.mkdirs(self._output_dir)
             file_path = os.path.join(self._output_dir, "instances_predictions.pth")
             with PathManager.open(file_path, "wb") as f:
-                torch.save(predictions, f)
+                torch.save(self._predictions, f)
 
         self._results = OrderedDict()
-        if "proposals" in predictions[0]:
-            self._eval_box_proposals(predictions)
-        if "instances" in predictions[0]:
-            self._eval_predictions(set(self._tasks), predictions)
+        if "proposals" in self._predictions[0]:
+            self._eval_box_proposals()
+        if "instances" in self._predictions[0]:
+            self._eval_predictions(set(self._tasks))
         # Copy so the caller can do whatever with results
         return copy.deepcopy(self._results)
 
-    def _eval_predictions(self, tasks, predictions):
+    def _eval_predictions(self, tasks):
         """
-        Evaluate predictions on the given tasks.
+        Evaluate self._predictions on the given tasks.
         Fill self._results with the metrics of the tasks.
         """
         self._logger.info("Preparing results for COCO format ...")
-        coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
+        self._coco_results = list(itertools.chain(*[x["instances"] for x in self._predictions]))
 
         # unmap the category ids for COCO
         if hasattr(self._metadata, "thing_dataset_id_to_contiguous_id"):
             reverse_id_mapping = {
                 v: k for k, v in self._metadata.thing_dataset_id_to_contiguous_id.items()
             }
-            for result in coco_results:
+            for result in self._coco_results:
                 category_id = result["category_id"]
                 assert (
                     category_id in reverse_id_mapping
@@ -167,7 +163,7 @@ class COCOEvaluator(DatasetEvaluator):
             file_path = os.path.join(self._output_dir, "coco_instances_results.json")
             self._logger.info("Saving results to {}".format(file_path))
             with PathManager.open(file_path, "w") as f:
-                f.write(json.dumps(coco_results))
+                f.write(json.dumps(self._coco_results))
                 f.flush()
 
         if not self._do_evaluation:
@@ -178,9 +174,9 @@ class COCOEvaluator(DatasetEvaluator):
         for task in sorted(tasks):
             coco_eval = (
                 _evaluate_predictions_on_coco(
-                    self._coco_api, coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
+                    self._coco_api, self._coco_results, task, kpt_oks_sigmas=self._kpt_oks_sigmas
                 )
-                if len(coco_results) > 0
+                if len(self._coco_results) > 0
                 else None  # cocoapi does not handle empty results very well
             )
 
@@ -189,9 +185,9 @@ class COCOEvaluator(DatasetEvaluator):
             )
             self._results[task] = res
 
-    def _eval_box_proposals(self, predictions):
+    def _eval_box_proposals(self):
         """
-        Evaluate the box proposals in predictions.
+        Evaluate the box proposals in self._predictions.
         Fill self._results with the metrics for "box_proposals" task.
         """
         if self._output_dir:
@@ -199,7 +195,7 @@ class COCOEvaluator(DatasetEvaluator):
             # Predicted box_proposals are in XYXY_ABS mode.
             bbox_mode = BoxMode.XYXY_ABS.value
             ids, boxes, objectness_logits = [], [], []
-            for prediction in predictions:
+            for prediction in self._predictions:
                 ids.append(prediction["image_id"])
                 boxes.append(prediction["proposals"].proposal_boxes.tensor.numpy())
                 objectness_logits.append(prediction["proposals"].objectness_logits.numpy())
@@ -222,7 +218,9 @@ class COCOEvaluator(DatasetEvaluator):
         areas = {"all": "", "small": "s", "medium": "m", "large": "l"}
         for limit in [100, 1000]:
             for area, suffix in areas.items():
-                stats = _evaluate_box_proposals(predictions, self._coco_api, area=area, limit=limit)
+                stats = _evaluate_box_proposals(
+                    self._predictions, self._coco_api, area=area, limit=limit
+                )
                 key = "AR{}@{:d}".format(suffix, limit)
                 res[key] = float(stats["ar"].item() * 100)
         self._logger.info("Proposal metrics: \n" + create_small_table(res))
@@ -247,19 +245,14 @@ class COCOEvaluator(DatasetEvaluator):
         }[iou_type]
 
         if coco_eval is None:
-            self._logger.warn("No predictions from the model!")
-            return {metric: float("nan") for metric in metrics}
+            self._logger.warn("No predictions from the model! Set scores to -1")
+            return {metric: -1 for metric in metrics}
 
         # the standard metrics
-        results = {
-            metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
-            for idx, metric in enumerate(metrics)
-        }
+        results = {metric: float(coco_eval.stats[idx] * 100) for idx, metric in enumerate(metrics)}
         self._logger.info(
             "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
         )
-        if not np.isfinite(sum(results.values())):
-            self._logger.info("Note that some metrics cannot be computed.")
 
         if class_names is None or len(class_names) <= 1:
             return results
@@ -298,9 +291,11 @@ class COCOEvaluator(DatasetEvaluator):
 def instances_to_coco_json(instances, img_id):
     """
     Dump an "Instances" object to a COCO-format json that's used for evaluation.
+
     Args:
         instances (Instances):
         img_id (int): the image id
+
     Returns:
         list[dict]: list of json annotations in COCO format.
     """
