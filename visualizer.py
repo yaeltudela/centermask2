@@ -15,6 +15,8 @@ from detectron2.structures import Boxes, BoxMode, Instances
 from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
 
+from dataset_utils import register_polyp_datasets
+
 
 def create_instances(predictions, image_size):
     ret = Instances(image_size)

@@ -1,0 +1,28 @@
+_BASE_: "Base-CenterMask-VoVNet.yaml"
+MODEL:
+  ROI_HEADS:
+    NUM_CLASSES: 2
+  WEIGHTS: "https://www.dropbox.com/s/q98pypf96rhtd8y/vovnet39_ese_detectron2.pth?dl=1"
+  VOVNET:
+    CONV_BODY : "V-39-eSE"
+  FCOS:
+    NUM_CLASSES: 2
+SOLVER:
+#  LR_SCHEDULER_NAME: WarmupCosineLR
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.0025
+  WEIGHT_DECAY: 0.0001
+  STEPS: (0, 12287, 19656)
+  MAX_ITER: 24575 # 5 epocas
+DATASETS:
+  TRAIN: ("CVC_VideoClinicDB_train", )
+  TEST: ("CVC_VideoClinicDB_valid","CVC_VideoClinicDB_test",)
+OUTPUT_DIR: "output/centermask/CenterMask-V-39-ms-3x"
+
+INPUT:
+  MIN_SIZE_TRAIN: (288,)
+  MAX_SIZE_TRAIN: 800
+  MIN_SIZE_TEST: 288
+  MAX_SIZE_TEST: 800
+TEST:
+  DETECTIONS_PER_IMAGE: 1

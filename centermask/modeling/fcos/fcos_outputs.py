@@ -458,7 +458,7 @@ class FCOSOutputs(object):
                 keep = cls_scores >= image_thresh.item()
                 keep = torch.nonzero(keep).squeeze(1)
                 result = result[keep]
-                result = select_by_size(result, min_size, max_size)
+                # result = select_by_size(result, min_size, max_size)
             results.append(result)
         return results
 

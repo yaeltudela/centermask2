@@ -441,6 +441,15 @@ class CenterROIHeads(ROIHeads):
 
         instances = self._forward_keypoint(features, instances)
 
+        if self.test_detections_per_img >= 0:
+            keep_instances = []
+            for instance in instances:
+                dets = {}
+                for k in instance.get_fields():
+                    dets[k] = instance.get(k)[:self.test_detections_per_img]
+
+                keep_instances.append(Instances(instance.image_size, **dets))
+            instances = keep_instances
         return instances
 
 
